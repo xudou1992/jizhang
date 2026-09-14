@@ -1,0 +1,57 @@
+# 版本全部对齐本机已缓存的那一套（与上一版一致的 AGP / Kotlin），避免首次构建下载。
+[versions]
+agp = "8.6.1"
+kotlin = "2.0.20"
+compose = "1.6.8"
+material3 = "1.2.1"
+activityCompose = "1.9.0"
+coreKtx = "1.13.1"
+lifecycle = "2.8.4"
+navigation = "2.7.7"
+room = "2.6.1"
+work = "2.9.1"
+datastore = "1.1.1"
+kotlinxSerialization = "1.7.1"
+ktor = "2.3.12"
+
+minSdk = "28"
+compileSdk = "35"
+targetSdk = "34"
+
+[libraries]
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+
+compose-ui = { module = "androidx.compose.ui:ui", version.ref = "compose" }
+compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics", version.ref = "compose" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "compose" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview", version.ref = "compose" }
+compose-material3 = { module = "androidx.compose.material3:material3", version.ref = "material3" }
+
+# material3 的传递依赖会把这两个钉在 1.6.0，但离线缓存里只有 1.6.8 的 android 制品。
+# 显式声明 1.6.8 做版本对齐（同时也就摆脱了 11398 个图标的 extended 包）。
+compose-material-icons-core = { module = "androidx.compose.material:material-icons-core", version.ref = "compose" }
+compose-material-ripple = { module = "androidx.compose.material:material-ripple", version.ref = "compose" }
+
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+
+androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version = "1.8.1" }
+
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version = "2.0.20-1.0.25" }

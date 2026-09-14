@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose 只借用系统主题做窗口底色，真正的配色在 ui/theme 里 -->
+    <style name="Theme.Jizhang" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
