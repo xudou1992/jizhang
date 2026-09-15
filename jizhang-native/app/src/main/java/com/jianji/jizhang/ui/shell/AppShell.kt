@@ -14,8 +14,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,8 +29,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jianji.jizhang.ui.theme.JizhangIcons
+import com.jianji.jizhang.ui.theme.NeutralAvatar
 import androidx.compose.ui.unit.sp
 
 /** 四个主 Tab，顺序即底栏顺序。「记一笔」的 + 按钮插在中间，它不是一个 Tab。 */
@@ -48,12 +55,14 @@ fun AppShell(
     selected: AppTab,
     onSelect: (AppTab) -> Unit,
     onAdd: () -> Unit,
+    snackbarHostState: SnackbarHostState,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = { JizhangBottomBar(selected, onSelect, onAdd) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         content = content,
     )
 }
@@ -65,34 +74,39 @@ private fun JizhangBottomBar(
     onAdd: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .height(64.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            NavItem(AppTab.HOME, JizhangIcons.Home, selected, onSelect, Modifier.weight(1f))
-            NavItem(AppTab.BILLS, JizhangIcons.Bill, selected, onSelect, Modifier.weight(1f))
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
-                        .clickable(onClick = onAdd),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        JizhangIcons.Plus,
-                        contentDescription = "记一笔",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp),
-                    )
+        Column {
+            // 一条发丝分隔线，把底栏和内容区分开（浅灰底 + 白底栏本来就贴得比较近）。
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .height(64.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                NavItem(AppTab.HOME, JizhangIcons.Home, selected, onSelect, Modifier.weight(1f))
+                NavItem(AppTab.BILLS, JizhangIcons.Bill, selected, onSelect, Modifier.weight(1f))
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    // 48dp：全 App 最高频的入口，不能再抠这 2dp（1.0.5 审计）。
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable(onClick = onAdd),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            JizhangIcons.Plus,
+                            contentDescription = "记一笔",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
                 }
+                NavItem(AppTab.STATS, JizhangIcons.Stats, selected, onSelect, Modifier.weight(1f))
+                NavItem(AppTab.SETTINGS, JizhangIcons.Settings, selected, onSelect, Modifier.weight(1f))
             }
-            NavItem(AppTab.STATS, JizhangIcons.Stats, selected, onSelect, Modifier.weight(1f))
-            NavItem(AppTab.SETTINGS, JizhangIcons.Settings, selected, onSelect, Modifier.weight(1f))
         }
     }
 }
@@ -106,13 +120,25 @@ private fun NavItem(
     modifier: Modifier = Modifier,
 ) {
     val active = selected == tab
-    val color = if (active) MaterialTheme.colorScheme.primary else Color(0xFF9CA0AB)
+    // 未选中态走 NeutralAvatar 令牌，不再各处硬编码 0xFF9CA0AB。
+    val color = if (active) MaterialTheme.colorScheme.primary else NeutralAvatar
     Column(
         modifier = modifier.clickable { onSelect(tab) },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, contentDescription = tab.label, tint = color, modifier = Modifier.size(20.dp))
+        Icon(
+            icon,
+            // 下方已有同名 Text，图标再带 contentDescription 会被 TalkBack 念两遍「首页 首页」。
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(if (active) 22.dp else 20.dp),
+        )
         Spacer(Modifier.height(3.dp))
-        Text(tab.label, fontSize = 10.sp, color = color)
+        Text(
+            tab.label,
+            fontSize = 10.sp,
+            fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+            color = color,
+        )
     }
 }

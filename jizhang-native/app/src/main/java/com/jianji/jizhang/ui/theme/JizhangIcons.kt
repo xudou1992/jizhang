@@ -187,13 +187,6 @@ object JizhangIcons {
         "M9.4 16 H12.8",
     )
 
-    /** 空态 · 文件夹（放在大尺寸空态里，圆角与外框都留足） */
-    val Folder: ImageVector = line(
-        "JzFolder",
-        "M3.6 8.4 A1.8 1.8 0 0 1 5.4 6.6 H9.2 L11 9 H18.6 A1.8 1.8 0 0 1 20.4 10.8 V17.6 " +
-            "A1.8 1.8 0 0 1 18.6 19.4 H5.4 A1.8 1.8 0 0 1 3.6 17.6 Z",
-    )
-
     /** 云端备份 Tab · 云 */
     val Cloud: ImageVector = line(
         "JzCloud",

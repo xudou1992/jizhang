@@ -1,6 +1,16 @@
 package com.jianji.jizhang.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+
+/**
+ * 在**数据色**（分类/账户的彩色圆底）上选黑或白的前景。
+ *
+ * 此前一律写死白字，黄 #E2B008 这类亮底上对比只有 2.0:1，浅色分类等于没字。
+ * 亮底给 [TextPrimary]（不是纯黑，和全局文字同一支灰阶），暗底给纯白。
+ */
+fun readableOn(background: Color): Color =
+    if (background.luminance() > 0.55f) TextPrimary else Color.White
 
 /**
  * 色彩令牌。
@@ -15,6 +25,8 @@ import androidx.compose.ui.graphics.Color
  *    卡片与页面之间才有层次 —— 之前 `#FCFCFF` 配纯白卡片等于没有层次。
  * 4. 补齐 10 个分类色板。分类色是**数据**不是设计色，但它决定饼图/环形图好不好看，
  *    所以在这里集中定义，避免各处随手写死。
+ * 5. （1.0.5 无障碍审计）浅色支出红/收入绿加深到 AA：旧值在白底上正文小字只有
+ *    3.9~4.4:1，不满足 4.5:1；数字是账本的命，宁可沉稳一点。深色模式另有一组，不受影响。
  */
 
 /* ---------------- 品牌：清朗蓝 ---------------- */
@@ -31,8 +43,8 @@ val BrandOnContainer = Color(0xFF10245C)
 /* ---------------- 语义：支出红 / 收入绿 ---------------- */
 // 注意：这与股票「红涨绿跌」是两套语境，不要「统一」。
 
-val Expense = Color(0xFFE5484D)
-val Income = Color(0xFF128A5B)
+val Expense = Color(0xFFC93236)
+val Income = Color(0xFF0E7A50)
 val Transfer = Color(0xFF6E7684)
 
 /** 语义色的浅底容器（列表行、汇总块）。 */
@@ -62,6 +74,14 @@ val OutlineStrong = Color(0xFFBFC5D2)
 val TextPrimary = Color(0xFF14161C)
 val TextSecondary = Color(0xFF616773)
 val TextTertiary = Color(0xFF8B93A1)
+
+/**
+ * 「无分类 / 无账户」头像的兜底灰。
+ *
+ * 单独成令牌：此前 `Color(0xFF9CA0AB)` 在账单列表、详情、统计、底栏四处各写一遍，
+ * 既容易改漏，也和主题里的 [TextTertiary]（0xFF8B93A1）不是同一个值 —— 凭空多出一种灰。
+ */
+val NeutralAvatar = Color(0xFF9CA0AB)
 
 /* ---------------- 中性 · 深色 ---------------- */
 

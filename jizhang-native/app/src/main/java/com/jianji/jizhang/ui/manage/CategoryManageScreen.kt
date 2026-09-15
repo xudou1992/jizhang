@@ -44,8 +44,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jianji.jizhang.data.CategoryEntity
 import com.jianji.jizhang.ui.theme.CategoryPalette
+import com.jianji.jizhang.ui.theme.toStoredLong
 import com.jianji.jizhang.ui.theme.JizhangIcons
 import com.jianji.jizhang.ui.theme.JizhangTheme
+import com.jianji.jizhang.ui.theme.readableOn
 
 /**
  * 分类管理页。纯 UI + 回调，本页不写任何 IO / 数据库逻辑。
@@ -207,7 +209,7 @@ private fun CategoryRow(
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 分类自身数据色圆，居中白字首字
+        // 分类自身数据色圆：首字颜色按底色亮度选黑/白（黄底白字只有 2:1，之前不可读）
         Box(
             modifier = Modifier
                 .size(40.dp)
@@ -217,7 +219,7 @@ private fun CategoryRow(
         ) {
             Text(
                 category.name.firstOrNull()?.toString().orEmpty(),
-                color = Color.White,
+                color = readableOn(Color(category.color)),
                 fontWeight = FontWeight.Medium,
                 style = MaterialTheme.typography.bodyLarge,
             )
@@ -256,9 +258,10 @@ private fun CategoryEditDialog(
     onConfirm: (name: String, color: Long) -> Unit,
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    // 选中色用 Long 存储，与 CategoryEntity.color 同型；默认取色板第一个
+    // 选中色用 Long 存储，与 CategoryEntity.color 同型（0xAARRGGBB）；默认取色板第一个。
+    // 必须走 toStoredLong()：color.value.toLong() 是打包值，再交给 Color(Long) 会溢出成全透明。
     var selectedColor by remember {
-        mutableStateOf(initial?.color ?: CategoryPalette.first().value.toLong())
+        mutableStateOf(initial?.color ?: CategoryPalette.first().toStoredLong())
     }
 
     AlertDialog(
@@ -301,7 +304,7 @@ private fun CategoryEditDialog(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                         ) {
                             rowColors.forEach { color ->
-                                val c = color.value.toLong()
+                                val c = color.toStoredLong()
                                 val selected = c == selectedColor
                                 Surface(
                                     shape = CircleShape,

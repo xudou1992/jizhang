@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 只有坚果云 WebDAV 需要联网。 -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 1.0.5 起重新声明：自动备份失败/暴跌熔断时发本地通知（BackupNotify）。
+         此前删除是因为全项目没有任何通知调用；现在有了真实用途才配得上这个权限。
+         未授权时 BackupNotify.warn 静默跳过，结果仍写 DataStore 在备份页可见。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application

@@ -32,9 +32,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,16 +48,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jianji.jizhang.data.AccountEntity
 import com.jianji.jizhang.data.CategoryEntity
+import com.jianji.jizhang.data.TxDraft
+import com.jianji.jizhang.data.TxEntity
 import com.jianji.jizhang.data.TxWithCategory
+import com.jianji.jizhang.data.centsToYuan
+import com.jianji.jizhang.data.isTransfer
+import com.jianji.jizhang.data.parseYuanToCents
+import com.jianji.jizhang.ui.components.AccountSelector
+import com.jianji.jizhang.ui.components.DateField
+import com.jianji.jizhang.ui.components.TxBillType
+import com.jianji.jizhang.ui.components.TxBillTypeSelector
 import com.jianji.jizhang.ui.theme.JizhangIcons
 import com.jianji.jizhang.ui.theme.JizhangTheme
-import kotlin.math.roundToLong
+import com.jianji.jizhang.ui.theme.NeutralAvatar
 import java.text.SimpleDateFormat
 import java.util.Locale
-
-/** 金额恒为「分」，统一用千分手点格式，避免各处分散写。 */
-private fun money(cents: Long): String = String.format(Locale.CHINA, "%,.2f", cents / 100.0)
 
 /** 查看态用的完整日期时间。 */
 private val dtFmt = SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.CHINA)
@@ -68,12 +72,28 @@ private val dtFmt = SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.CHINA)
 /** 复制文本用的纯日期。 */
 private val dateFmt = SimpleDateFormat("yyyy年M月d日", Locale.CHINA)
 
+/** 账户 id → 名字；查不到说明账户已被删（转账行引用已删账户是允许的，不能白屏）。 */
+private fun accountNameOrDeleted(accounts: List<AccountEntity>, id: String): String =
+    accounts.firstOrNull { it.id == id }?.name ?: "已删除账户"
+
+/** 转账行的人话描述：「转账 ¥35.50：微信 → 招商」，查看/删除确认/复制共用一份。 */
+private fun transferLine(tx: TxEntity, accounts: List<AccountEntity>): String =
+    "转账 ¥${centsToYuan(tx.amountCents)}：" +
+        accountNameOrDeleted(accounts, tx.accountId) + " → " +
+        accountNameOrDeleted(accounts, tx.toAccountId)
+
 /** 组装可复制的账单文本，例如「2026年9月14日 餐饮 -35.50 午饭」。 */
-private fun buildCopyText(item: TxWithCategory): String {
+private fun buildCopyText(item: TxWithCategory, accounts: List<AccountEntity>): String {
     val tx = item.tx
-    val catName = item.category?.name ?: "未分类"
-    val sign = if (tx.isExpense) "-" else "+"
-    val base = "${dateFmt.format(tx.dateTime)} $catName $sign${money(tx.amountCents)}"
+    val date = dateFmt.format(tx.dateTime)
+    // 转账不是消费也不是收入：「-35.50 + 分类」的模板两头都是错的语义，单独走 A → B 样式。
+    val base = if (tx.isTransfer) {
+        "$date ${transferLine(tx, accounts)}"
+    } else {
+        val catName = item.category?.name ?: "未分类"
+        val sign = if (tx.isExpense) "-" else "+"
+        "$date $catName $sign${centsToYuan(tx.amountCents)}"
+    }
     return if (tx.note.isNotBlank()) "$base ${tx.note}" else base
 }
 
@@ -82,7 +102,8 @@ private fun buildCopyText(item: TxWithCategory): String {
 fun TxDetailScreen(
     item: TxWithCategory,
     categories: List<CategoryEntity>,
-    onSave: (categoryId: String, isExpense: Boolean, amountCents: Long, note: String, dateTime: Long) -> Unit,
+    accounts: List<AccountEntity>,
+    onSave: (TxDraft) -> Unit,
     onDelete: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -90,18 +111,36 @@ fun TxDetailScreen(
     var editing by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
 
-    // 以 tx.id 为 key 初始化，切换账单或重新进入编辑都带原值
-    var isExpense by remember(item.tx.id) { mutableStateOf(item.tx.isExpense) }
+    // 以 tx.id 为 key 初始化，切换账单或重新进入编辑都带原值。
+    // 类型三段枚举与 AddScreen 同源：转账行（isExpense=true + toAccountId 非空）
+    // 若只读 isExpense 会被误判成「支出」，编辑一保存就把转账改成了普通消费。
+    var type by remember(item.tx.id) {
+        mutableStateOf(
+            when {
+                item.tx.isTransfer -> TxBillType.TRANSFER
+                item.tx.isExpense -> TxBillType.EXPENSE
+                else -> TxBillType.INCOME
+            },
+        )
+    }
+    var toAccountId by remember(item.tx.id) { mutableStateOf(item.tx.toAccountId) }
     var amountText by remember(item.tx.id) {
         mutableStateOf(String.format(Locale.CHINA, "%.2f", item.tx.amountCents / 100.0))
     }
     var note by remember(item.tx.id) { mutableStateOf(item.tx.note) }
     var categoryId by remember(item.tx.id) { mutableStateOf(item.tx.categoryId) }
+    var accountId by remember(item.tx.id) { mutableStateOf(item.tx.accountId) }
+    var dateTime by remember(item.tx.id) { mutableStateOf(item.tx.dateTime) }
 
     // 先把颜色提到 composable 作用域，避免在非 composable lambda 里读主题
     val colorScheme = MaterialTheme.colorScheme
     val semantic = JizhangTheme.colors
-    val accent = if (item.tx.isExpense) semantic.expense else semantic.income
+    // 转账用中性色：红「支出」绿「收入」对一笔左口袋进右口袋的钱都是错误语义。
+    val accent = when {
+        item.tx.isTransfer -> semantic.transfer
+        item.tx.isExpense -> semantic.expense
+        else -> semantic.income
+    }
     val context = LocalContext.current
 
     Column(
@@ -159,30 +198,66 @@ fun TxDetailScreen(
         Spacer(Modifier.height(20.dp))
 
         if (!editing) {
-            ViewMode(item = item, accent = accent, onEdit = { editing = true }, onCopy = {
-                val text = buildCopyText(item)
-                val cm = context.getSystemService(ClipboardManager::class.java) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("账单", text))
-                Toast.makeText(context, "账单已复制到剪贴板", Toast.LENGTH_SHORT).show()
-            })
+            ViewMode(
+                item = item,
+                accent = accent,
+                accounts = accounts,
+                onEdit = { editing = true },
+                onCopy = {
+                    val text = buildCopyText(item, accounts)
+                    val cm = context.getSystemService(ClipboardManager::class.java) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("账单", text))
+                    Toast.makeText(context, "账单已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                },
+            )
         } else {
             EditMode(
-                isExpense = isExpense,
+                type = type,
                 amountText = amountText,
                 note = note,
                 categoryId = categoryId,
                 categories = categories,
-                onIsExpense = { isExpense = it },
+                accounts = accounts,
+                accountId = accountId,
+                toAccountId = toAccountId,
+                dateTime = dateTime,
+                onType = { type = it },
                 onAmountText = { amountText = it },
                 onNote = { note = it },
                 onCategory = { categoryId = it },
+                onAccount = { accountId = it },
+                onToAccount = { toAccountId = it },
+                onDate = { dateTime = it },
                 onSave = {
-                    val cents = amountText.replace(",", "").toDoubleOrNull()
-                        ?.let { (it * 100).roundToLong() } ?: 0L
-                    // categoryId 恒非空（未分类是空串），只有金额需要校验。
-                    if (cents > 0) {
-                        onSave(categoryId, isExpense, cents, note, item.tx.dateTime)
-                        editing = false
+                    val cents = parseYuanToCents(amountText)
+                    val transfer = type == TxBillType.TRANSFER
+                    when {
+                        cents <= 0 -> Unit
+                        // 转账必选转入；转出改成了当前转入值时当场出声（选项已排除，
+                        // 这种相等只能来自「先选 B 再把转出改成 B」的顺序问题）。
+                        transfer && toAccountId.isBlank() -> Unit
+                        transfer && toAccountId == accountId -> Toast.makeText(
+                            context,
+                            "转出的账户和转入的账户不能相同",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        else -> {
+                            onSave(
+                                TxDraft(
+                                    // 转账无分类；从转账切回普通收支时若原 categoryId
+                                    // 是空串，就保持「未分类」，与旧编辑行为一致。
+                                    categoryId = if (transfer) "" else categoryId,
+                                    accountId = accountId,
+                                    // 转账恒 isExpense（ViewModel 再规范化一次，口径一致）。
+                                    isExpense = type != TxBillType.INCOME,
+                                    amountCents = cents,
+                                    note = note,
+                                    dateTime = dateTime,
+                                    toAccountId = if (transfer) toAccountId else "",
+                                ),
+                            )
+                            editing = false
+                        }
                     }
                 },
             )
@@ -195,10 +270,10 @@ fun TxDetailScreen(
             onDismissRequest = { showDelete = false },
             title = { Text("删除这条账单？") },
             text = {
+                // 与复制文本同一套描述：转账若走「未分类 -xx」模板，
+                // 用户会以为删的是一笔消费，实际删掉的是两边账户的差额来源。
                 Text(
-                    "${dateFmt.format(item.tx.dateTime)}  " +
-                        (item.category?.name ?: "未分类") + "  " +
-                        (if (item.tx.isExpense) "-" else "+") + money(item.tx.amountCents),
+                    buildCopyText(item, accounts),
                     color = colorScheme.onSurfaceVariant,
                 )
             },
@@ -220,16 +295,31 @@ fun TxDetailScreen(
 private fun ViewMode(
     item: TxWithCategory,
     accent: Color,
+    accounts: List<AccountEntity>,
     onEdit: () -> Unit,
     onCopy: () -> Unit,
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val cat = item.category
     val tx = item.tx
+    val isTransfer = tx.isTransfer
+    // 只有多账户时才值得占一行展示。
+    val accountName = accounts.firstOrNull { it.id == tx.accountId }?.name
+        ?.takeIf { accounts.size > 1 }
+    // 转账必有两个账户（哪怕已被删），这行永远值得展示；查不到的名字显示「已删除账户」。
+    val transferFlowText = if (isTransfer) {
+        accountNameOrDeleted(accounts, tx.accountId) + " → " + accountNameOrDeleted(accounts, tx.toAccountId)
+    } else {
+        ""
+    }
 
-    // 大号金额（displaySmall）
+    // 大号金额（displaySmall）。转账既不是花掉也不是赚到，「→」前缀代替 +/-。
     Text(
-        (if (tx.isExpense) "-" else "+") + money(tx.amountCents),
+        (when {
+            isTransfer -> "→"
+            tx.isExpense -> "-"
+            else -> "+"
+        }) + centsToYuan(tx.amountCents),
         style = MaterialTheme.typography.displaySmall,
         fontWeight = FontWeight.Medium,
         color = accent,
@@ -244,26 +334,54 @@ private fun ViewMode(
             .background(JizhangTheme.colors.card)
             .padding(16.dp),
     ) {
-        InfoRow(label = "分类") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(cat?.let { Color(it.color) } ?: Color(0xFF9CA0AB)),
-                )
-                Spacer(Modifier.width(8.dp))
+        // 转账行 categoryId 恒空串，硬画只会多一行「未分类」的假分类。
+        if (!isTransfer) {
+            InfoRow(label = "分类") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(cat?.let { Color(it.color) } ?: NeutralAvatar),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        cat?.name ?: "未分类",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorScheme.onBackground,
+                    )
+                }
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                color = colorScheme.outline,
+            )
+        }
+        if (isTransfer) {
+            InfoRow(label = "账户") {
                 Text(
-                    cat?.name ?: "未分类",
+                    transferFlowText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = colorScheme.onBackground,
                 )
             }
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                color = colorScheme.outline,
+            )
+        } else if (accountName != null) {
+            InfoRow(label = "账户") {
+                Text(
+                    accountName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colorScheme.onBackground,
+                )
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                color = colorScheme.outline,
+            )
         }
-        HorizontalDivider(
-            modifier = Modifier.padding(vertical = 12.dp),
-            color = colorScheme.outline,
-        )
         InfoRow(label = "日期时间") {
             Text(
                 dtFmt.format(tx.dateTime),
@@ -329,47 +447,37 @@ private fun InfoRow(
     }
 }
 
-/** 编辑态：类型切换 + 金额 + 分类网格 + 备注 + 保存。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/** 编辑态：三段类型切换 + 金额 + （非转账）分类网格 + 转出/转入账户 + 日期 + 备注 + 保存。 */
 @Composable
 private fun EditMode(
-    isExpense: Boolean,
+    type: TxBillType,
     amountText: String,
     note: String,
     categoryId: String?,
     categories: List<CategoryEntity>,
-    onIsExpense: (Boolean) -> Unit,
+    accounts: List<AccountEntity>,
+    accountId: String,
+    toAccountId: String,
+    dateTime: Long,
+    onType: (TxBillType) -> Unit,
     onAmountText: (String) -> Unit,
     onNote: (String) -> Unit,
     onCategory: (String) -> Unit,
+    onAccount: (String) -> Unit,
+    onToAccount: (String) -> Unit,
+    onDate: (Long) -> Unit,
     onSave: () -> Unit,
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val semantic = JizhangTheme.colors
-    val cents = amountText.replace(",", "").toDoubleOrNull()?.let { (it * 100).roundToLong() } ?: 0L
-    val canSave = cents > 0 && categoryId != null
+    val isTransfer = type == TxBillType.TRANSFER
+    val cents = parseYuanToCents(amountText)
+    // 转账的必填是「转入已选」而不是「分类已选」——隐藏网格后若仍按分类卡按钮，
+    // 一笔转账永远保存不了。
+    val requiredChoiceOk = if (isTransfer) toAccountId.isNotBlank() else categoryId != null
+    val canSave = cents > 0 && requiredChoiceOk
 
-    // 类型二段切换
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-        SegmentedButton(
-            selected = isExpense,
-            onClick = { onIsExpense(true) },
-            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-            colors = SegmentedButtonDefaults.colors(
-                activeContainerColor = semantic.expenseContainer,
-                activeContentColor = semantic.expense,
-            ),
-        ) { Text("支出") }
-        SegmentedButton(
-            selected = !isExpense,
-            onClick = { onIsExpense(false) },
-            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-            colors = SegmentedButtonDefaults.colors(
-                activeContainerColor = semantic.incomeContainer,
-                activeContentColor = semantic.income,
-            ),
-        ) { Text("收入") }
-    }
+    // 三段切换：与 AddScreen 共用一个组件，两处表单不会再长得不一样
+    TxBillTypeSelector(selected = type, onSelect = onType)
     Spacer(Modifier.height(20.dp))
 
     Text("金额", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
@@ -394,55 +502,92 @@ private fun EditMode(
     )
     Spacer(Modifier.height(20.dp))
 
-    Text("分类", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
-    Spacer(Modifier.height(8.dp))
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(4),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(((categories.size + 3) / 4 * 84).dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        userScrollEnabled = false,
-    ) {
-        items(categories) { c ->
-            val selected = categoryId == c.id
-            Column(
-                modifier = Modifier.clickable { onCategory(c.id) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(Color(c.color))
-                        .then(
-                            if (selected) {
-                                Modifier.border(2.dp, colorScheme.primary, CircleShape)
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .clickable { onCategory(c.id) },
-                    contentAlignment = Alignment.Center,
+    // 转账无分类：编辑成转账时整段网格隐藏，保存路径也会把 categoryId 写成空串。
+    if (!isTransfer) {
+        Text("分类", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(4),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(((categories.size + 3) / 4 * 84).dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            userScrollEnabled = false,
+        ) {
+            items(categories) { c ->
+                val selected = categoryId == c.id
+                Column(
+                    modifier = Modifier.clickable { onCategory(c.id) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(c.color))
+                            .then(
+                                if (selected) {
+                                    Modifier.border(2.dp, colorScheme.primary, CircleShape)
+                                } else {
+                                    Modifier
+                                },
+                            )
+                            .clickable { onCategory(c.id) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            c.name.take(1),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        c.name.take(1),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White,
+                        c.name,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        color = if (selected) colorScheme.primary else colorScheme.onSurfaceVariant,
                     )
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    c.name,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    color = if (selected) colorScheme.primary else colorScheme.onSurfaceVariant,
-                )
             }
         }
+        Spacer(Modifier.height(16.dp))
     }
+
+    // 账户：只有一个账户时不显示。转账语境下这是「转出」，下面再挂一行「转入」。
+    if (accounts.size > 1) {
+        Text(
+            if (isTransfer) "转出" else "账户",
+            style = MaterialTheme.typography.bodySmall,
+            color = colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        AccountSelector(
+            accounts = accounts,
+            selectedId = accountId,
+            onSelect = onAccount,
+        )
+        if (isTransfer) {
+            // 候选排除转出账户：A→A 的转账会留下两边互相抵消的幽灵流水。
+            // 排除后可能只剩 1 个候选，它仍是必选项，不能被单账户隐藏规则吞掉。
+            Spacer(Modifier.height(16.dp))
+            Text("转入", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            AccountSelector(
+                accounts = accounts.filter { it.id != accountId },
+                selectedId = toAccountId,
+                onSelect = onToAccount,
+                showSingleOption = true,
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+
+    Text("日期", style = MaterialTheme.typography.bodySmall, color = colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(8.dp))
+    DateField(dateTime = dateTime, onChange = onDate)
     Spacer(Modifier.height(16.dp))
 
     OutlinedTextField(

@@ -14,8 +14,8 @@ android {
         applicationId = "com.jianji.jizhang"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 6
+        versionName = "1.0.5"
         resourceConfigurations += listOf("zh-rCN", "zh-rTW", "en")
     }
 
@@ -40,6 +40,9 @@ android {
 
     buildFeatures {
         compose = true
+        // 设置页要显示 BuildConfig.VERSION_NAME —— 别再手写版本号，
+        // 之前那里硬编码着「1.0.0」，而实际已经是 1.0.3。
+        buildConfig = true
     }
 
     packaging {
@@ -51,6 +54,23 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    testOptions {
+        unitTests.all {
+            // 把 schema 目录告诉单测，让 LedgerSchemaTest 能校验导出的 schema 与实体一致。
+            it.systemProperty("jizhang.schemaDir", "$projectDir/schemas")
+        }
+    }
+}
+
+ksp {
+    // 导出 Room schema 到 app/schemas/ 并提交进仓库。
+    //
+    // 此前 exportSchema = false，schema 历史一点没留：将来给实体加一个字段，
+    // 既没有「上一版长什么样」的基线可写 Migration，又因为挂着
+    // fallbackToDestructiveMigration() 而**静默清空整个库**。
+    // 打开导出后，每次构建都会落一份 <版本>.json，加字段时照它写 Migration 即可。
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -79,4 +99,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.core)
+
+    // 纯 JVM 单测：金额解析、颜色 ↔ Long、备份命名正则、远端时间兜底链。
+    // 这些都是纯函数，几行断言就能永久拦住回归，不需要设备。
+    testImplementation(libs.junit)
 }

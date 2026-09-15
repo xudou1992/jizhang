@@ -13,6 +13,7 @@ work = "2.9.1"
 datastore = "1.1.1"
 kotlinxSerialization = "1.7.1"
 ktor = "2.3.12"
+junit = "4.13.2"
 
 minSdk = "28"
 compileSdk = "35"
@@ -48,6 +49,9 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+
+# 纯 JVM 单测（不依赖设备）。金额解析 / 颜色转换 / 备份命名这些纯函数靠它兜底。
+junit = { module = "junit:junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

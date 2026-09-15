@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">记账软件</string>
+    <!-- 与 README、备份文件名、设置页统一叫「简记」。此前是「记账软件」，
+         同一份产物里两个名字。 -->
+    <string name="app_name">简记</string>
 </resources>

@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -41,12 +43,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.jianji.jizhang.data.AccountEntity
 import com.jianji.jizhang.data.TxWithCategory
+import com.jianji.jizhang.data.balanceMap
+import com.jianji.jizhang.data.parseYuanToCents
 import com.jianji.jizhang.ui.theme.CategoryPalette
+import com.jianji.jizhang.ui.theme.toStoredLong
 import com.jianji.jizhang.ui.theme.JizhangIcons
 import com.jianji.jizhang.ui.theme.JizhangTheme
+import com.jianji.jizhang.ui.theme.readableOn
 import java.util.Locale
 
 /**
@@ -60,13 +67,28 @@ fun AccountManageScreen(
     onAdd: (name: String, color: Long) -> Unit,
     onUpdate: (AccountEntity) -> Unit,
     onDelete: (id: String, onResult: (Boolean) -> Unit) -> Unit,
+    /**
+     * 「调整当前余额…」：把账户余额调到 [targetCents]（分）。
+     * ViewModel 会补一笔「余额调整」流水留痕而不是硬改数字。
+     * 带默认值 → MainActivity 接线前本页照常编译。
+     */
+    onAdjustBalance: (accountId: String, targetCents: Long) -> Unit = { _, _ -> },
+    /** 编辑账户时改初始余额（分）。同上，接线前兼容旧调用点。 */
+    onInitialChange: (AccountEntity, Long) -> Unit = { _, _ -> },
     onBack: () -> Unit,
 ) {
     // 弹窗状态：新增 / 编辑（持有被编辑账户）/ 删除二次确认（持有被删账户 id）
+    // / 调整余额（持有目标账户）
     var showAdd by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<AccountEntity?>(null) }
     var deletingId by remember { mutableStateOf<String?>(null) }
+    var adjusting by remember { mutableStateOf<AccountEntity?>(null) }
     val context = LocalContext.current
+
+    // 真实余额 = 初始余额 + 流水，口径只认 data/Ledger.kt 的 balanceMap 一份实现。
+    // all 本来就含转账行 —— balanceMap 内部会做「转出扣、转入加」，这里绝不能再过滤，
+    // 否则过滤掉转账后余额会把左口袋挪右口袋的钱算丢。
+    val balanceByAccount = remember(all, accounts) { balanceMap(all, accounts) }
 
     // 预聚合：按账户分组后统计收入/支出/笔数，避免每帧遍历 608 条。
     // 这里只读数据，不碰 MaterialTheme。
@@ -81,9 +103,10 @@ fun AccountManageScreen(
             AccountStat(income = income, expense = expense, count = txs.size)
         }
     }
-    // 总资产 = 所有账户（收入 − 支出）之和；无账单的账户贡献 0，不影响结果。
-    val totalCents = remember(statsByAccount) {
-        statsByAccount.values.sumOf { it.income - it.expense }
+    // 总资产 = 各账户真实余额之和。旧口径「收入 − 支出」两头都错：
+    // 不含初始余额，且转账只落在转出账户的「支出」上，转一笔总资产就凭空蒸发一笔。
+    val totalCents = remember(balanceByAccount, accounts) {
+        accounts.sumOf { balanceByAccount[it.id] ?: it.initialCents }
     }
 
     Column(
@@ -169,8 +192,11 @@ fun AccountManageScreen(
                     AccountCard(
                         account = a,
                         stat = statsByAccount[a.id],
+                        // 展示真实余额（初始 + 流水，含转账双向），不再是「收支差」。
+                        balanceCents = balanceByAccount[a.id] ?: a.initialCents,
                         onEdit = { editing = a },
                         onDelete = { deletingId = a.id },
+                        onAdjust = { adjusting = a },
                     )
                     Spacer(Modifier.height(12.dp))
                 }
@@ -178,26 +204,44 @@ fun AccountManageScreen(
         }
     }
 
-    // 新增弹窗
+    // 新增弹窗（没有历史流水，初始余额固定 0，想要非零去编辑里改）
     if (showAdd) {
         AccountEditDialog(
             initial = null,
             onDismiss = { showAdd = false },
-            onConfirm = { name, color ->
+            onConfirm = { name, color, _ ->
                 onAdd(name, color)
                 showAdd = false
             },
         )
     }
 
-    // 编辑弹窗
+    // 编辑弹窗：名称/颜色走 onUpdate（整行覆盖），初始余额单独走 onInitialChange
+    // —— 让 ViewModel 用 setAccountInitial 的 copy 语义去改这一个字段。
+    // ⚠️ 必须把「改名后」的实体传给 onInitialChange：updateAccount 是整行 @Update，
+    // ViewModel 拿到的若是改名前的旧副本，第二次写库会把新名字无声覆盖回旧名字。
     editing?.let { acc ->
         AccountEditDialog(
             initial = acc,
             onDismiss = { editing = null },
-            onConfirm = { name, color ->
-                onUpdate(acc.copy(name = name, color = color))
+            onConfirm = { name, color, initialCents ->
+                val updated = acc.copy(name = name, color = color)
+                onUpdate(updated)
+                if (initialCents != acc.initialCents) onInitialChange(updated, initialCents)
                 editing = null
+            },
+        )
+    }
+
+    // 调整当前余额：输入的是「核对后的真实余额」，差额由 ViewModel 补流水
+    adjusting?.let { acc ->
+        AdjustBalanceDialog(
+            account = acc,
+            currentCents = balanceByAccount[acc.id] ?: acc.initialCents,
+            onDismiss = { adjusting = null },
+            onConfirm = { targetCents ->
+                onAdjustBalance(acc.id, targetCents)
+                adjusting = null
             },
         )
     }
@@ -223,20 +267,22 @@ fun AccountManageScreen(
     }
 }
 
-/** 单账户卡：色圆（首字）+ 名称 + 编辑/删除；次行余额；末行收入·支出·笔数。 */
+/** 单账户卡：色圆（首字）+ 名称 + 编辑/删除；次行真实余额 + 调整入口；末行收入·支出·笔数。 */
 @Composable
 private fun AccountCard(
     account: AccountEntity,
     stat: AccountStat?,
+    /** 初始余额 + 流水（含转账双向）得到的真实余额，由外层用 balanceMap 算好传入。 */
+    balanceCents: Long,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onAdjust: () -> Unit,
 ) {
     val income = stat?.income ?: 0L
     val expense = stat?.expense ?: 0L
     val count = stat?.count ?: 0
-    val balance = income - expense
-    // 余额颜色：正数用收入绿，负数用支出红（在 @Composable 内取色，符合约束）。
-    val balanceColor = if (balance >= 0) JizhangTheme.colors.income else JizhangTheme.colors.expense
+    // 余额颜色：正数用收入绿，负数用支出红（信用卡/花呗类账户余额为负是常态）。
+    val balanceColor = if (balanceCents >= 0) JizhangTheme.colors.income else JizhangTheme.colors.expense
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -249,7 +295,7 @@ private fun AccountCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 账户自身数据色圆，居中白字首字
+                // 账户自身数据色圆：首字颜色按底色亮度选黑/白
                 Box(
                     modifier = Modifier
                         .size(40.dp)
@@ -259,7 +305,7 @@ private fun AccountCard(
                 ) {
                     Text(
                         account.name.firstOrNull()?.toString().orEmpty(),
-                        color = Color.White,
+                        color = readableOn(Color(account.color)),
                         fontWeight = FontWeight.Medium,
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -290,13 +336,24 @@ private fun AccountCard(
 
             Spacer(Modifier.height(10.dp))
 
-            // 次行：余额（按正负取语义色）
-            Text(
-                "¥${yuan(balance)}",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Medium,
-                color = balanceColor,
-            )
+            // 次行：真实余额 + 「调整当前余额…」入口。
+            // 放余额旁边而不是藏进菜单：对账场景（核完银行卡 App 数字对不上）
+            // 的下一步动作就该在错的那个数字旁边。
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "¥${yuan(balanceCents)}",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = balanceColor,
+                )
+                Spacer(Modifier.width(4.dp))
+                TextButton(
+                    onClick = onAdjust,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text("调整当前余额…", style = MaterialTheme.typography.bodySmall)
+                }
+            }
 
             Spacer(Modifier.height(4.dp))
 
@@ -310,26 +367,47 @@ private fun AccountCard(
     }
 }
 
-/** 新增/编辑弹窗：账户名 + 10 色板选色。 */
+/**
+ * 新增/编辑弹窗：账户名 + 10 色板选色；编辑态额外一节「初始余额」。
+ *
+ * 初始余额只在编辑态出现：onAdd 的签名不带余额（改签名会波及所有调用点），
+ * 新建的账户从 0 起步，想要非零基数建完立刻在编辑里填，一步不多绕。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccountEditDialog(
     initial: AccountEntity?,
     onDismiss: () -> Unit,
-    onConfirm: (name: String, color: Long) -> Unit,
+    onConfirm: (name: String, color: Long, initialCents: Long) -> Unit,
 ) {
     var name by remember { mutableStateOf(initial?.name ?: "") }
-    // 选中色用 Long 存储，与 AccountEntity.color 同型；默认取色板第一个
+    // 选中色用 Long 存储，与 AccountEntity.color 同型（0xAARRGGBB）；默认取色板第一个。
+    // 必须走 toStoredLong()：color.value.toLong() 是打包值，再交给 Color(Long) 会溢出成全透明。
     var selectedColor by remember {
-        mutableStateOf(initial?.color ?: CategoryPalette.first().value.toLong())
+        mutableStateOf(initial?.color ?: CategoryPalette.first().toStoredLong())
+    }
+    // 初始余额以「元」文本编辑，保存时 parseYuanToCents 换分 —— 库里永远是分，
+    // 元只活在输入框（Money.kt 的唯一换算口径）。预填用带千分位的展示串也能解析回来。
+    var initialText by remember {
+        mutableStateOf(initial?.let { yuan(it.initialCents) } ?: "")
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(
-                enabled = name.isNotBlank(),
-                onClick = { onConfirm(name.trim(), selectedColor) },
+                // 非法的初始余额文本（如 "1.2.3"）按 0 处理不如直接不让保存：
+                // 静默归零会把用户真实的开户基数抹掉。
+                enabled = name.isNotBlank() &&
+                    (initial == null || initialText.isBlank() ||
+                        initialText.replace(",", "").trim().toDoubleOrNull() != null),
+                onClick = {
+                    onConfirm(
+                        name.trim(),
+                        selectedColor,
+                        if (initial == null) 0L else parseYuanToCents(initialText),
+                    )
+                },
             ) {
                 Text("保存", fontWeight = FontWeight.Medium)
             }
@@ -349,6 +427,23 @@ private fun AccountEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (initial != null) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = initialText,
+                        onValueChange = { v ->
+                            // 允许负号：信用卡/花呗的开户基数本来就是欠款。
+                            initialText = v.filter { it.isDigit() || it == '.' || it == '-' }.take(12)
+                        },
+                        label = { Text("初始余额（元）") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        supportingText = {
+                            Text("当前余额 = 初始余额 + 全部流水；开户前已有的存款/欠款填这里")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
                 Text(
                     "颜色",
@@ -364,7 +459,7 @@ private fun AccountEditDialog(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                         ) {
                             rowColors.forEach { color ->
-                                val c = color.value.toLong()
+                                val c = color.toStoredLong()
                                 val selected = c == selectedColor
                                 Surface(
                                     shape = CircleShape,
@@ -396,6 +491,62 @@ private fun AccountEditDialog(
                         }
                     }
                 }
+            }
+        },
+    )
+}
+
+/**
+ * 「调整当前余额…」弹窗：输入核对后的实际余额（元）。
+ *
+ * 预填 App 当前算出来的余额（去掉千分位便于修改）。确认回调给的是**目标分**：
+ * 差额、补流水都是 ViewModel.adjustBalanceTo 的事 —— 页面只管收集意图。
+ */
+@Composable
+private fun AdjustBalanceDialog(
+    account: AccountEntity,
+    currentCents: Long,
+    onDismiss: () -> Unit,
+    onConfirm: (targetCents: Long) -> Unit,
+) {
+    // 预填不带千分位：带着逗号用户一改数字就混进非法字符，干脆给干净的。
+    var text by remember(account.id) {
+        mutableStateOf(String.format(Locale.CHINA, "%.2f", currentCents / 100.0))
+    }
+    val valid = text.replace(",", "").trim().toDoubleOrNull() != null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onConfirm(parseYuanToCents(text)) }, enabled = valid) {
+                Text("调整", fontWeight = FontWeight.Medium)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消", fontWeight = FontWeight.Medium) }
+        },
+        title = { Text("调整「${account.name}」余额") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { v ->
+                        // 允许负号：透支账户对出负余额是真实情况。
+                        text = v.filter { it.isDigit() || it == '.' || it == '-' || it == ',' }.take(14)
+                    },
+                    label = { Text("实际余额（元）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                // 说清楚「调整」不是改数字而是补一笔流水：不写这句，
+                // 稍后账单里冒出一笔「余额调整」会被当成 Bug/幽灵记录。
+                Text(
+                    "当前 ¥${yuan(currentCents)}。保存后将生成一笔「余额调整」记录留痕，可在账单里查看或删除。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
     )

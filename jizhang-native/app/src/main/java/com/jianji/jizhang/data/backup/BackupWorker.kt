@@ -9,6 +9,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.Constraints
 import androidx.work.NetworkType
+import com.jianji.jizhang.data.LedgerDb
 import kotlinx.coroutines.flow.first
 // Charsets.UTF_8 来自 kotlin.text（stdlib 自动可见），不要 import java.nio.charset。
 import java.io.File
@@ -86,7 +87,25 @@ suspend fun runBackupNow(
 ): Result<Unit> {
     val app = context.applicationContext
     return runCatching {
+        val settings = app.nutstoreSettingsFlow().first()
         val c = readCreds(app)
+
+        // ---- 暴跌熔断：坏快照禁止自动覆盖云端「最新版」 ----
+        // 场景：Room 迁移事故/清库后记了一笔新账，3 分钟防抖就把近乎空的库
+        // 推上云，覆盖掉唯一的好备份 —— 双重丢数据。自动来源且笔数较上次
+        // 成功上传时骤减一半以上（或归零），直接拒传并发通知。
+        // 手工备份是明确的用户意图，不受熔断限制。
+        val txCount = LedgerDb.get(app).dao().txCount()
+        if (origin == BackupOrigin.AUTO && settings.lastTxCount > 0 &&
+            (txCount == 0 || txCount * 2 < settings.lastTxCount)
+        ) {
+            val msg = "自动备份已熔断：账单数从 ${settings.lastTxCount} 骤减到 $txCount，" +
+                "为防坏数据未覆盖云端最新版。若确实是有意删减，请手动备份一次确认。"
+            app.updateNutstoreSettings(lastResult = msg)
+            BackupNotify.warn(app, msg)
+            return@runCatching
+        }
+
         val json = BackupCodec.export(app)
         val bytes = json.toByteArray(Charsets.UTF_8)
         val device = deviceName()
@@ -109,16 +128,22 @@ suspend fun runBackupNow(
         val now = System.currentTimeMillis()
         app.updateNutstoreSettings(
             lastSyncAt = now,
+            lastTxCount = txCount,
             lastResult = buildString {
                 append("成功：")
                 append(origin.label)
                 if (archive) append("归档") else append("同步")
-                append(" $device（${bytes.size / 1024}KB）")
+                append(" $device（${bytes.size / 1024}KB · $txCount 笔）")
             },
         )
     }.onFailure {
-        // 失败时也把结果写回，方便 UI 展示（runCatching 已捕获异常）。
-        app.updateNutstoreSettings(lastResult = "失败：${it.message ?: "未知错误"}")
+        // 失败时也把结果写回，方便 UI 展示（runCatching 已捕获异常）；
+        // 自动来源额外发通知 —— 密码失效这类问题必须让用户在 App 外也能察觉。
+        val reason = it.message ?: it.javaClass.simpleName
+        app.updateNutstoreSettings(lastResult = "失败：$reason")
+        if (origin == BackupOrigin.AUTO) {
+            BackupNotify.warn(app, "自动备份失败：$reason。云端备份可能已过期，请尽快在设置→备份里处理。")
+        }
     }
 }
 

@@ -8,3 +8,6 @@ local.properties
 .kotlin/
 .cxx/
 .DS_Store
+# 工作区记忆/工具目录，不属于项目产物，不要提交
+.workbuddy-ai/
+_build_native.log

@@ -1238,7 +1238,7 @@ private fun formatStamp(epochMs: Long, never: String = "时间未知"): String {
 }
 
 /**
- * 账号脱敏：`504546466@qq.com` → `50•••@qq.com`。
+ * 账号脱敏：`abcdef@qq.com` → `ab•••@qq.com`。
  * 备份页是可能被别人瞄到的页面，默认状态不摆明文。
  */
 private fun maskEmail(raw: String): String {

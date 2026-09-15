@@ -157,18 +157,29 @@ private val DarkSemantic = SemanticColors(
 )
 
 /**
- * @param darkTheme 是否深色
+ * @param darkTheme 是否深色 —— **仅在 [themeMode] 为 SYSTEM 时生效**，
+ *                  保留原默认值 `isSystemInDarkTheme()` 以兼容未接线的旧调用点。
  * @param trueBlack AMOLED 真黑：页面与卡片都压到 #000，靠描边分层次。
- *                  用户设置里开了「纯黑」才传 true。
+ *                  用户设置里开了「纯黑」才传 true。跟随最终深色判定，
+ *                  浅色下（含强制 LIGHT）一律忽略。
+ * @param themeMode 三态主题。LIGHT/DARK 显式覆盖系统设置；SYSTEM 沿旧行为。
+ *                  带默认值 → MainActivity 接线前旧调用照常编译、照常跟随系统。
  */
 @Composable
 fun JizhangTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     trueBlack: Boolean = false,
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
     content: @Composable () -> Unit,
 ) {
+    // 显式模式优先，SYSTEM 才吃调用方传进来的系统深色判定。
+    val isDark = when (themeMode) {
+        ThemeMode.SYSTEM -> darkTheme
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
     val scheme = when {
-        !darkTheme -> LightScheme
+        !isDark -> LightScheme
         trueBlack -> DarkScheme.copy(
             background = PureBlack,
             surface = PureBlack,
@@ -177,7 +188,7 @@ fun JizhangTheme(
         )
         else -> DarkScheme
     }
-    val semantic = if (darkTheme) {
+    val semantic = if (isDark) {
         DarkSemantic.copy(card = if (trueBlack) PureBlack else CardSurfaceDark)
     } else {
         LightSemantic
@@ -185,7 +196,7 @@ fun JizhangTheme(
 
     CompositionLocalProvider(
         LocalSemanticColors provides semantic,
-        LocalDarkTheme provides darkTheme,
+        LocalDarkTheme provides isDark,
     ) {
         MaterialTheme(
             colorScheme = scheme,

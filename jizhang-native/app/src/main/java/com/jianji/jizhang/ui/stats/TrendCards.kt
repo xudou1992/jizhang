@@ -1,19 +1,9 @@
 package com.jianji.jizhang.ui.stats
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -23,175 +13,30 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jianji.jizhang.data.TxWithCategory
+import com.jianji.jizhang.data.centsToYuan
 import com.jianji.jizhang.ui.theme.JizhangTheme
 import java.util.Calendar
-import java.util.Locale
 
-/** 金额格式：分 → 元，两位、千分位、中文语境 */
-private fun money(cents: Long): String = String.format(Locale.CHINA, "%,.2f", cents / 100.0)
+/**
+ * 转账判据（本地副本）。
+ * TODO(接线时换成 Ledger.kt 的 isTransfer)：该扩展属性随 toAccountId 在另一分支落地，
+ * 提前引用会让本文件编译不过；行为等价 —— 转入账户非空即视为转账流水。
+ * 命名与 StatsScreen.kt 里的同款判据错开：private 顶层声明只在本文件可见，
+ * 但同名容易让人误以为是共享工具，改一处漏一处。
+ */
+private val TxWithCategory.isTransferRow: Boolean
+    get() = tx.toAccountId.isNotBlank()
 
-/** 单月趋势聚合（近 6 个月柱状图用） */
-private data class MonthTrend(
-    val key: Int,
-    val month: Int, // 1..12
-    var expense: Long,
-    var income: Long,
-)
-
-/** 近 6 个月收支趋势：分组柱状图 */
-@Composable
-fun MonthlyTrendCard(all: List<TxWithCategory>) {
-    val onBackground = MaterialTheme.colorScheme.onBackground
-    val expenseColor = JizhangTheme.colors.expense
-    val incomeColor = JizhangTheme.colors.income
-    val axisColor = MaterialTheme.colorScheme.outline
-
-    val months = remember(all) {
-        val now = Calendar.getInstance().apply {
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val list = (0 until 6).map { off ->
-            val c = now.clone() as Calendar
-            c.add(Calendar.MONTH, off - 5)
-            MonthTrend(
-                key = c.get(Calendar.YEAR) * 100 + (c.get(Calendar.MONTH) + 1),
-                month = c.get(Calendar.MONTH) + 1,
-                expense = 0L,
-                income = 0L,
-            )
-        }
-        val byKey = list.associateBy { it.key }
-        val c = Calendar.getInstance()
-        for (t in all) {
-            c.timeInMillis = t.tx.dateTime
-            val key = c.get(Calendar.YEAR) * 100 + (c.get(Calendar.MONTH) + 1)
-            val bucket = byKey[key] ?: continue
-            if (t.tx.isExpense) bucket.expense += t.tx.amountCents
-            else bucket.income += t.tx.amountCents
-        }
-        list
-    }
-
-    var maxVal = 0L
-    for (m in months) {
-        if (m.expense > maxVal) maxVal = m.expense
-        if (m.income > maxVal) maxVal = m.income
-    }
-    if (maxVal == 0L) maxVal = 1L
-    val hasData = months.any { it.expense != 0L || it.income != 0L }
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(
-                text = "近 6 个月收支趋势",
-                style = MaterialTheme.typography.titleMedium,
-                color = onBackground,
-            )
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.fillMaxWidth().height(160.dp)) {
-                Canvas(Modifier.fillMaxSize()) {
-                    if (!hasData) {
-                        val baseY = size.height
-                        drawRoundRect(
-                            color = axisColor,
-                            topLeft = Offset(0f, baseY - 1.dp.toPx()),
-                            size = Size(size.width, 1.dp.toPx()),
-                            cornerRadius = CornerRadius(0f),
-                        )
-                        return@Canvas
-                    }
-                    val groupW = size.width / 6f
-                    val barW = 14.dp.toPx()
-                    val gap = 6.dp.toPx()
-                    val baseY = size.height
-                    months.forEachIndexed { i, m ->
-                        val cx = groupW * (i + 0.5f)
-                        val exH = size.height * (m.expense.toFloat() / maxVal)
-                        val inH = size.height * (m.income.toFloat() / maxVal)
-                        drawRoundRect(
-                            color = expenseColor,
-                            topLeft = Offset(cx - barW - gap / 2f, baseY - exH),
-                            size = Size(barW, exH.coerceAtLeast(0f)),
-                            cornerRadius = CornerRadius(4.dp.toPx()),
-                        )
-                        drawRoundRect(
-                            color = incomeColor,
-                            topLeft = Offset(cx + gap / 2f, baseY - inH),
-                            size = Size(barW, inH.coerceAtLeast(0f)),
-                            cornerRadius = CornerRadius(4.dp.toPx()),
-                        )
-                    }
-                }
-                if (!hasData) {
-                    Text(
-                        text = "最近 6 个月还没有记录",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-                }
-            }
-            Row(Modifier.fillMaxWidth()) {
-                months.forEach { m ->
-                    Text(
-                        text = "${m.month}月",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = onBackground,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 8.dp),
-            ) {
-                Box(
-                    Modifier
-                        .size(9.dp)
-                        .clip(CircleShape)
-                        .background(expenseColor),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "支出",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = onBackground,
-                )
-                Spacer(Modifier.width(16.dp))
-                Box(
-                    Modifier
-                        .size(9.dp)
-                        .clip(CircleShape)
-                        .background(incomeColor),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "收入",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = onBackground,
-                )
-            }
-        }
-    }
-}
-
-/** 月度结余明细：最近 12 个月中「有数据」的月份，从新到旧 */
+/**
+ * 月度结余明细：最近 12 个月中「有数据」的月份，从新到旧。
+ *
+ * 这里曾经还有一张 `MonthlyTrendCard`（固定锚定当前月的近 6 个月柱状图），
+ * 与 `StatsScreen` 里跟随月份选择器的 `TrendCard` 高度重叠，已删除。
+ * 近 6 个月的趋势统一由 `StatsScreen.TrendCard` 负责。
+ */
 @Composable
 fun YearBarsCard(all: List<TxWithCategory>) {
     val onBackground = MaterialTheme.colorScheme.onBackground
@@ -215,6 +60,8 @@ fun YearBarsCard(all: List<TxWithCategory>) {
                 MonthSum(cc.get(Calendar.YEAR), cc.get(Calendar.MONTH) + 1, 0L, 0L)
         }
         for (t in all) {
+            // 剔除转账：转出一笔、转入一笔，不滤掉的话结余明细每笔转账都双计虚增
+            if (t.isTransferRow) continue
             c.timeInMillis = t.tx.dateTime
             val key = c.get(Calendar.YEAR) * 100 + (c.get(Calendar.MONTH) + 1)
             val s = sums[key] ?: continue
@@ -228,7 +75,7 @@ fun YearBarsCard(all: List<TxWithCategory>) {
     }
 
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -265,21 +112,21 @@ fun YearBarsCard(all: List<TxWithCategory>) {
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            text = "支 ¥${money(r.expense)}",
+                            text = "支 ¥${centsToYuan(r.expense)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = expenseColor,
                             textAlign = TextAlign.End,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            text = "收 ¥${money(r.income)}",
+                            text = "收 ¥${centsToYuan(r.income)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = incomeColor,
                             textAlign = TextAlign.End,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            text = "结余 ¥${money(r.balance)}",
+                            text = "结余 ¥${centsToYuan(r.balance)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = onBackground,
                             textAlign = TextAlign.End,
